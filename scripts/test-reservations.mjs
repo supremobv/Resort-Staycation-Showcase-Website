@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {todayISO,addDays} from '../app/stay-data.ts';
+const base=process.env.TEST_BASE_URL||'http://127.0.0.1:8788';
+if(!['127.0.0.1','localhost'].includes(new URL(base).hostname))throw Error('This fixture test runs only against a local preview.');
+const headers={'Content-Type':'application/json',Origin:base};
+const auth={...headers,'oai-authenticated-user-id':'local_qa','oai-authenticated-user-email':'qa@example.com'};
+const body={name:'Local reservation QA',email:'qa@example.com',phone:'',room:'garden',start:addDays(todayISO(),3),end:addDays(todayISO(),5),guests:2,message:'Local integration fixture.',consent:'on',estimate:1};
+assert.equal((await fetch(base)).status,200);
+assert.equal((await fetch(base+'/api/reservations')).status,401);
+async function submit(data,customHeaders=headers){return fetch(base+'/api/reservations',{method:'POST',headers:customHeaders,body:JSON.stringify(data)})}
+assert.equal((await submit({...body,start:addDays(todayISO(),-1)})).status,400);
+assert.equal((await submit({...body,end:body.start})).status,400);
+assert.equal((await submit({...body,guests:3})).status,400);
+assert.equal((await submit({...body,email:'invalid'})).status,400);
+assert.equal((await submit({...body,consent:''})).status,400);
+assert.equal((await submit(body,{...headers,Origin:'https://other.example'})).status,403);
+const saved=await submit(body);assert.equal(saved.status,201);const result=await saved.json();assert.match(result.reference,/^LAYA-[A-F0-9]{8}$/);
+const rows=await (await fetch(base+'/api/reservations',{headers:auth})).json();const found=rows.find(row=>row.reference===result.reference);assert.ok(found);assert.equal(found.estimate,13600);assert.equal(found.status,'New');
+let update=await fetch(base+'/api/reservations',{method:'PATCH',headers:auth,body:JSON.stringify({id:found.id,status:'Contacted'})});assert.equal(update.status,200);
+const persisted=await (await fetch(base+'/api/reservations',{headers:auth})).json();assert.equal(persisted.find(row=>row.id===found.id).status,'Contacted');
+console.log('Reservation validation, consent, capacity, origin protection, reference creation, persistence, estimate calculation, and host status update passed.');
